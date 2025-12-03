@@ -3,15 +3,35 @@ import sys
 import pandas as pd
 import numpy as np
 
+
 class AttendeeScraper:
-    def __init__(self, Upay_filepath=None,swap_filepath=None):
+    def __init__(self, Upay_filepath=None,swap_filepath=None, verbose=0, manual_removal=0):
         self.Upay_filepath = Upay_filepath
         self.swap_filepath = swap_filepath
+        self.manual_removal=manual_removal
+        self.verbose=verbose
         # initialize the arrays
         self.attendees_guest_map={} #dict of attendes (people who can bring guests) with their guests listed
         self.attendees=[]         # list of attendees (people who can bring guests)
         self.everyone=[]          # everyone (that will be swaped around in the seating plan)
         self.others=[]            # other people (swap guests that are not willing to be mixed)
+
+    def swap_over_guests(self,recipient,donor):
+            '''swap the guests of onre person to another (all of them)'''
+            self.attendees_guest_map[recipient].extend(self.attendees_guest_map[donor])
+            self.attendees_guest_map[donor]=[]
+
+    def remove_people_n_their_guests(self,namelist,removedlist):
+        '''remove a set of people from the list (and also their guests)'''
+        for name in namelist:
+            if name in self.attendees_guest_map:
+                if self.verbose: print(f'{name}')
+                removedlist.append(name)
+                removedlist.extend(self.attendees_guest_map[name])
+                if self.verbose and self.attendees_guest_map[name]!=[] : print(f'__{self.attendees_guest_map[name]}')
+                del self.attendees_guest_map[name]
+            else:
+                print(f'warning {name} not found')
 
     def load_Upay(self):
         if self.Upay_filepath == None: sys.exit('need to specify the file first silly')
@@ -44,26 +64,27 @@ class AttendeeScraper:
                     self.attendees_guest_map[attendee_name].append(f'Guest of {attendee_name} ({n})')
                     # self.attendees_guest_map[attendee_name].append(f'Guest of {attendee_name}')
                     n+=1
-
-        #NOTE list(set( )) removes duplicates
-        if(0):#remove the shite from upay
-            input('removing extra guests accidentally given (thanks Upay)')
-            print(self.attendees_guest_map['Hugo Bos'])
-            self.attendees_guest_map['Hugo Bos']=[self.attendees_guest_map['Hugo Bos'][0]]
-            print(self.attendees_guest_map['Hugo Bos'])
+        
+        self.n_removed=0
+        if(self.manual_removal): # manual removal of people from calculation because they are difficult
+            from MCR_Dining.xmas_superhall_fixes import remove_extras_from_algo,move_guests_to_correct_hosts
+            remove_extras_from_algo(self)
+            move_guests_to_correct_hosts(self)
 
         # self.attendees.extend(list(set(self.attendees_guest_map.keys()))) #list of the people that have booked (not including peoples guests)
         self.attendees.extend(self.attendees_guest_map.keys()) #list of the people that have booked (not including peoples guests)
-        ### add to everyone 
+        ### add to everyone (this is the master list)
         for attendee, guests in self.attendees_guest_map.items():
             self.everyone.append(attendee)
             self.everyone.extend(guests)
-        self.everyone=list(set(self.everyone)) #list(set( )) removes duplicates
+        self.everyone=sorted(list(set(self.everyone))) #list(set( )) removes duplicates
+        
+        self.nprop=len(self.everyone)
         return
     
     def load_Swaps(self):
         if self.swap_filepath == None: sys.exit('need to specify the file first silly')
-        ''' Load the swap people THAT WANT TO BE PUT IN SEATING PLAN'''
+        ''' Load the swap people THAT WANT TO BE PUT IN SEATING PLAN (not used after the RK tantrum)'''
         included_colleges=['St Catz','Wolfson','Clare Hall']
         # included_colleges=['St Catz','Wolfson']
         df = pd.read_excel(self.swap_filepath, engine='openpyxl')
@@ -82,38 +103,25 @@ class AttendeeScraper:
                 self.others.append(name)
         return
 
-    
-
-
     def pretty_print(self):
         ''' print out the attendees and guests'''
         if self.attendees is None: 
             sys.exit('need to get the data first silly')
         for attendee in self.attendees:
             print(attendee)
-            # for guest in self.attendees_guest_map[attendee]:
-            #     print(f'__{guest} (guest of {attendee})')
+            for guest in self.attendees_guest_map[attendee]:
+                print(f'__{guest} (guest of {attendee})')
 
     def find(self,name):
-        ''' find the index of the name in the everyone list'''
+        ''' find the index of the name in the everyone master name-list'''
         index_list=[]
         for indx,person in enumerate(self.everyone):
             if name==person: index_list.append(indx)
         if len(index_list)==0: # noone found
-            # if not pd.isna(name): # if nan, noone was selected --> if not nan, error in name list
-            #     sys.exit(f'guest not found in everyone list.\n their name is {name}')
-            return -1 #guest not found
+            #sys.exit(f'guest not found in everyone list.\n their name is {name}')
+            return np.nan #guest not found
         elif len(index_list)>1:
             sys.exit(f'duplicates found of {name}')
         return index_list[0]
 
-
-
-# Replace with your saved file path
-# filename = "/mnt/c/Users/Cole/Downloads/Upay - Event Booking.html"
-
-# guestlist=AttendeeScraper(filename)
-# guestlist.load_html()
-# guestlist.get_attendees()
-# guestlist.pretty_print()
 

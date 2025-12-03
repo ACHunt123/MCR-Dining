@@ -1,40 +1,47 @@
 from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
-import sys
+import sys,random,argparse
 from setup import get_Matrices,plot_setup
 from MCR_Dining.superhall_seatingplan.metrics_moves import total_happiness,all_happiness,all_sat_with_guests,all_sat_with_friends
 from MCR_Dining.superhall_seatingplan.cyth import sa_core
+"""
+============================================================
+                 SEATING PLAN ALGORITHM
+============================================================
+Author: A. C. Hunt
 
-import argparse
-import numpy as np
-# Add argparse
+Description:
+------------
+This module implements a seating plan optimization algorithm
+using a combination of Python and Cython for performance. The
+algorithm handles guest assignment, special constraints, and
+preference scoring to generate reproducible, optimized seating
+arrangements. It uses simulated annealing. 
+"""
+
+### Inputs
+manual_removal=1 # Switch to do the manual removal of guests etc. described in xmas_superhall_fixes
+verbose=0        # Switch to make the outputs more verbose
+# get all of the file locations
+folder='/home/ach221/Desktop'
+event_booking_html = f"{folder}/Upay - Event Booking.html"
+seating_form_responses = f"{folder}/Xmas Superhall Seating Request Form (Responses).xlsx"
+swaps_xls = f"{folder}/MTSuperhallSwaps2025-26.xlsx"
+
+### Set the seed with argparse
 parser = argparse.ArgumentParser(description="Run seating / bath simulation with optional seed")
 parser.add_argument("--seed", type=int, default=0, help="Random seed")
 args = parser.parse_args()
-
-# Set the seed
 np.random.seed(args.seed)
-import random
 random.seed(args.seed)
 sa_core.seed_c_rng(args.seed)
 print(f'using seed {args.seed}')
 
-
-folder='/mnt/c/Users/Cole/Downloads'
-folder='/home/colehunt/software/MCR-dining/data'
-folder='/home/ach221/Desktop'
-folder='/home/ach221/Downloads'
 ### Get the names from Upay and seating form responses to generate the Matrices required
-event_booking_html = f"{folder}/Upay - Event Booking.html"
-seating_form_responses = f"{folder}/Superhall Seating Request Form (Responses).xlsx"
-swaps_xls = f"{folder}/MTSuperhallSwaps2025-26.xlsx"
-A,P,G,seat_positions,guestlist = get_Matrices(event_booking_html,swaps_xls,seating_form_responses) #matrices in csr format
+A,P,G,seat_positions,guestlist = get_Matrices(event_booking_html,swaps_xls,seating_form_responses,verbose,manual_removal) #matrices in csr format
 namelist=guestlist.everyone
 ntot=A.shape[0]
-print(f'total number of seats {ntot}')
-
-
 
 ### Randomize initial confign
 s=np.arange(ntot,dtype=np.int32)
@@ -53,12 +60,11 @@ if show:
     def stop(event):sys.exit()
     stop_button.on_clicked(stop)
 
-
 ### Parameters   
 T0 = 100
 T = T0
 hlist = []
-nt = 1_000_000
+nt = 2_000_000
 all_hlist=[]
 all_t=[]
 cooling_rate = 0.99995
@@ -79,9 +85,10 @@ A_indptr, A_indices, A_data = csr_to_int32(A)
 P_indptr, P_indices, P_data = csr_to_int32(P)
 G_indptr, G_indices, G_data = csr_to_int32(G)
 
+valid_found=0
 for it in range(nt):
     # monte carlo move
-    delta_h,s_trial,p_trial = sa_core.trial_move3(ntot, s,p,
+    delta_h,s_trial,p_trial,_ = sa_core.trial_move3(ntot, s,p,
                             A_indptr, A_indices, A_data,
                             P_indptr, P_indices, P_data,
                             G_indptr, G_indices, G_data)
@@ -92,30 +99,34 @@ for it in range(nt):
         s[:] = s_trial
         p[:] = p_trial
 
-    # # Every 100 steps, monitor progress, and help those who are pissed off
+    # help those who are pissed off once the time is late VERY AGGRESSIVE BIAS (+100)
     if it % 1000 == 0:
+        # get the annoyed people
         score1,total1,pissed1=all_sat_with_guests(s,A,guestlist)
         outstr,npissed2,score2,total2,pissed2=all_sat_with_friends(s,A,P,guestlist)
-        #  do moves of making people not mad:
-        for pissed_indx in np.unique(np.concatenate([pissed1, pissed2])):
-            # delta_h,s_trial,p_trial=trial_move3(ntot,s,p,A,P,G,int(pissed_indx))
-            delta_h,s_trial,p_trial = sa_core.trial_move3(ntot, s,p,
+        all_pissed=np.unique(np.concatenate([pissed1, pissed2]))
+        # Output the situation
+        print('SCORE1: {} of {}'.format(score1,total1))
+        print(outstr)
+        print(f'{it}/{nt}   h={h:.2f}   T={T:.3f}')
+        # If noones mad, this is a valid solution
+        if len(all_pissed) == 0:
+            if h>h_best:
+                h_best=h
+                valid_found=1
+                p_best=p.copy()
+                s_best=s.copy() 
+        #  Do forced moves of making the pissed people not mad:
+        for pissed_indx in all_pissed:
+            delta_h,s_trial,p_trial,bias = sa_core.trial_move3(ntot, s,p,
                             A_indptr, A_indices, A_data,
                             P_indptr, P_indices, P_data,
                             G_indptr, G_indices, G_data,int(pissed_indx))
-            if delta_h > 0 or np.random.rand() < np.exp(delta_h / T):
+            if delta_h+bias > 0 or np.random.rand() < np.exp((delta_h+bias) / T):
                 h += delta_h
                 s[:] = s_trial
                 p[:] = p_trial
-        score1,total1,pissed1=all_sat_with_guests(s,A,guestlist)
-       
-        print('SCORE1: {} of {}'.format(score1,total1))
-        print(outstr)
-
-        print(f'{it}/{nt}   h={h:.2f}   T={T:.3f}')
         hlist.append(h)
-
-        # Store best configuration if new better one here
 
         if show:
             ax.set_title(f"Update {it+1}, happiness {h}")
@@ -140,24 +151,29 @@ for it in range(nt):
 
     # Gradual cooling
     T *= cooling_rate
-
-    if h>h_best:# and score1==total1:
-        h_best=h
-        p_best=p.copy()
-        s_best=s.copy()  
-
-    if it%1000==0:
+ 
+    # Append the h and the time to a list so we can plot later
+    if it%(nt/1000)==0:
         all_hlist.append(int(h))  
         all_t.append(int(it))
 
+# if we didnt find possible solutions, just use the lst one (we could just exit instead though to save memory)
+if not valid_found:
+    h_best=h
+    p_best=p.copy()
+    s_best=s.copy() 
 
 ## Save the results to the seating plan
 p=p_best.copy()
 s=s_best.copy()
 import openpyxl
+from openpyxl.styles import PatternFill
+guest_fill = PatternFill(start_color="FFFF00", end_color="FFFF00",fill_type="solid")    # yellow
+host_fill  = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")   # orange
+
 print(f'best happiness {h_best}')
 
-# Point to the Excel file in the same folder
+### Save the results to the seating plan xcell sheet
 base = Path(__file__).parent # Get the path to the current script
 filename = base / "Seating-plan-template.xlsx"
 wb = openpyxl.load_workbook(filename)
@@ -165,29 +181,35 @@ ws = wb.active
 # Write each name into its corresponding cell
 for (col, row), person_indx in zip(seat_positions, p_best):
     name=namelist[person_indx]
-    ws.cell(row=int(row), column=int(col), value=name)
-
+    cell=ws.cell(row=int(row), column=int(col), value=name)
+    # add a fill  for the guests and the hosts 
+    if name in guestlist.attendees_guest_map:
+        if guestlist.attendees_guest_map[name]!=[]:
+            cell.fill = host_fill
+    if any(name in items for items in guestlist.attendees_guest_map.values()):
+        cell.fill = guest_fill
 # Save under a new name to keep the original template safe
 wb.save(f"seating_filled.xlsx")
+
+### Save the statistics for the fit 
 score1,total1,_=all_sat_with_guests(s,A,guestlist)
 outstr,npissed,score2,total2,_=all_sat_with_friends(s,A,P,guestlist)
 h = total_happiness(A, P, G, p, s)
-
 data = np.array([[score1, total1,score2,total2, npissed, h,args.seed]])
-
-# Save numeric data
 np.savetxt("results.txt", data, 
-           header="score1 total1 score2 total2 number_pissed_off total_hapiness seed", 
+           header="# score1 total1 score2 total2 number_pissed_off total_hapiness seed", 
            fmt="%.4f", 
            comments="")
-# save happiness graphs
+
+### save happiness graphs
 data=np.array([all_t,all_hlist])
-np.savetxt("h.txt", data.T, 
-           header="nt h", 
-           comments="")
-# ## plot the h
-plt.plot(all_t,all_hlist)       
-plt.show()
+# np.savetxt("h.txt", data.T,header="nt h", comments="")
+### plot the h
+plt.xlabel('t')
+plt.ylabel('h')
+plt.plot(all_t,all_hlist)    
+plt.title(f'Simulated annealing of seating-plan seed {args.seed}')   
+plt.savefig('hplot.pdf')
 # sys.exit()
 if show:
     plt.ioff()  # turn off interactive mode when done

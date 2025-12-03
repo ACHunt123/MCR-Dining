@@ -167,6 +167,7 @@ def trial_move3(int ntot,
     cdef int nearby=0
     cdef int filled=0
     cdef int all_done=0
+    cdef int bias
     cdef int adj_i
 
     # pick the person_i (if not inputted)
@@ -245,4 +246,5 @@ def trial_move3(int ntot,
                       P_indptr, P_indices, P_data,
                       G_indptr, G_indices, G_data)
 
-    return h1 - h0, s_trial, p_trial
+    bias=all_done*100
+    return h1 - h0, s_trial, p_trial,bias #the bias forces move

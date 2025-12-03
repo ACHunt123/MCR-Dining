@@ -144,4 +144,7 @@ Icon?
 **/nametags_filled.docx
 **/nametags_filled*
 
+# the fixes required (as they contain names)
+**/*superhall_fixes.py
+
 **/results.txt

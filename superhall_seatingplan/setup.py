@@ -7,14 +7,13 @@ from MCR_Dining.getnames import AttendeeScraper
 from scipy.sparse import csr_matrix
 from MCR_Dining.superhall_seatingplan.hall_setup import setup_hall
 
-def get_Matrices(event_booking_html,swaps_xlsprd,seating_form_responses):
-    ### Get the names from Upay
-    guestlist=AttendeeScraper(event_booking_html,swaps_xlsprd)
-    guestlist.load_Upay()
-    guestlist.load_Swaps()
-    # guestlist.pretty_print()
-    # sys.exit()
+def get_Matrices(event_booking_html,swaps_xlsprd,seating_form_responses,verbose=0,manual_removal=0):
 
+    ### Get the names from Upay
+    guestlist=AttendeeScraper(event_booking_html,swaps_xlsprd,verbose,manual_removal)
+    guestlist.load_Upay()
+    # guestlist.load_Swaps()
+    guestlist.pretty_print()
 
     '''
     Setup all of the Matrices needed for the Monte Carlo
@@ -24,13 +23,18 @@ def get_Matrices(event_booking_html,swaps_xlsprd,seating_form_responses):
     G: gallery matrix [people->seats]          Stores preferences of people to be in gallery. Also if needed can add biasing for seats to be at end of table
     '''
 
-    ### Setup the Hall (three long tables and 2 square in the gallery)
-    # table_types=['long','long','long','long','square','square']
-    # table_seats=[30,30,30,30,12,12]#144-120 =24
-    table_types=['high','long','long','long','long']
+    print(guestlist.nprop)
+    print(guestlist.n_removed)
+    assert guestlist.nprop + guestlist.n_removed == 173
 
-    table_seats=[24,36,36,36,23] #HT, T1, T2, T3, T4 
-    # table_seats=[24,36,36,36,23-15] #HT, T1, T2, T3, T4 
+    ### Setup the Hall
+    if(0):### FULL HALL(no gallery)
+        table_types=['high','long','long','long','long']
+        table_seats=[24,36,40,40,40]
+
+    # instead we just do this manually
+    table_types=['high','long','long','long','long']
+    table_seats=[24,36,40,28]
     if np.sum(table_seats)!=len(guestlist.everyone):
         print(f'there are {np.sum(table_seats)} seats, but {len(guestlist.everyone)} people')
         sys.exit()
@@ -48,18 +52,21 @@ def get_Matrices(event_booking_html,swaps_xlsprd,seating_form_responses):
             'Who would you like to sit next to?  Second priority.  You will automatically be put with your guests.',
             'Who would you like to sit next to?  Third priority. You will automatically be put with your guests!!',]
         name_indx=guestlist.find(name)
-        if name_indx==-1:
-            print(f'name {name} in superhall preference form not found')
+        if np.isnan(name_indx):
+            # print(f'name {name} in superhall preference form not found')
+            continue
         prefs_weights=[4,4,3] # weighting for the prefs
+        # missed=[] # the people that were not found
         for pl, Question in enumerate(Qs):
             pref = row[Question]
             if pd.isna(pref): continue # if the preference is not specified in the form continue
-            # print(f'{priority_level} priority is {pref}')
             pref_indx=guestlist.find(pref) # find the index in the name list
-            if pref_indx==-1:
-                print(f'preference of {pref} not found in guestlist, skipping')
+            if np.isnan(pref_indx):
+                print(f'preference of {pref} by {name} not found in guestlist, skipping')
+                # missed.append(pl)
                 continue
             P[name_indx,pref_indx]+=prefs_weights[pl] # assign the preferential weight
+        # print(missed)
         ## do the preferences for sitting in the gallery
         gallery_pref = row['I would prefer to be seated in the gallery if it is to be open']
         gallery_weight=5 # weighting for sitting in gallery
@@ -67,20 +74,26 @@ def get_Matrices(event_booking_html,swaps_xlsprd,seating_form_responses):
             G[name_indx,gallery_seat_indices]=gallery_weight
     
     ### Add preferences for sitting next to your guests
-    guest_pref=4
+    guest_pref=6
     print(f'total number of people: {len(guestlist.everyone)}')
     for attendee in guestlist.attendees:
         attendee_indx=guestlist.find(attendee)
-        if attendee_indx==-1: 
+        if np.isnan(attendee_indx): 
             print(f'attendee {attendee} not found')
             continue
         for guest in guestlist.attendees_guest_map[attendee]:
             guest_indx=guestlist.find(guest)
-            if guest_indx==-1:
+            if np.isnan(guest_indx):
                 print(f'guest {guest} not found')
                 continue
             P[guest_indx,attendee_indx]+=guest_pref
             P[attendee_indx,guest_indx]+=guest_pref
+
+    
+    if(manual_removal):## add in the manual fixes to the preferences
+        from MCR_Dining.xmas_superhall_fixes import extra_preferences
+        extra_preferences(P,guestlist)
+
      
     return csr_matrix(A),csr_matrix(P),csr_matrix(G),seat_positions,guestlist
 

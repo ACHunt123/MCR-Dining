@@ -7,7 +7,7 @@ from docx import Document
 
 folder='/mnt/c/Users/Cole/Downloads'
 folder='/home/colehunt/software/MCR-dining/data'
-folder='/home/ach221/Downloads'
+folder='/home/ach221/Desktop'
 ### Get the names from Upay and seating form responses to generate the Matrices required
 event_booking_html = f"{folder}/Upay - Event Booking.html"
 swaps_xls = f"{folder}/MTSuperhallSwaps2025-26.xlsx"
@@ -18,9 +18,11 @@ outname=f"nametags_filled"
 ### Get the names from Upay
 guestlist=AttendeeScraper(event_booking_html,swaps_xls)
 guestlist.load_Upay()
-guestlist.load_Swaps()
+# guestlist.load_Swaps()
 everyone=guestlist.everyone
 print(everyone)
+everyone=list(set(everyone))
+print(len(everyone))
 ### Clean up the numbering from the guestlist
 everyone=[name.strip('(1)').strip('(2)').strip('(3)') for name in everyone]
 ntot=len(everyone)
